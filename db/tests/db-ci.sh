@@ -40,6 +40,18 @@ lb() {
     --database-changelog-lock-table-name=databasechangeloglock_identity_audit "$@"
 }
 
+# Docker Hub limits the anonymous downloads of an address, and a shared CI runner can be over the limit
+# (429 Too Many Requests): wait and try again before giving up. retry ATTEMPTS SECONDS COMMAND...
+retry() {
+  attempts=$1; wait=$2; shift 2
+  tried=1
+  until "$@"; do
+    [ "$tried" -ge "$attempts" ] && return 1
+    echo "download failed (attempt $tried of $attempts), waiting ${wait}s" >&2
+    tried=$((tried + 1)); sleep "$wait"
+  done
+}
+
 check() { # name, then the command that must succeed
   name=$1; shift
   if reason=$("$@" 2>&1); then
@@ -77,7 +89,8 @@ rolled_back_to_empty() {
 }
 
 # ---- an empty instance, as multi-tour-infra-mongo leaves it for this domain
-docker build -q -f deploy/liquibase.Dockerfile -t "$LIQUIBASE_IMAGE" deploy >/dev/null || { echo "the runner image did not build"; exit 1; }
+retry 6 30 docker pull -q "$MONGO_IMAGE" >/dev/null || { echo "the MongoDB image could not be downloaded"; exit 1; }
+retry 6 30 docker build -q -f deploy/liquibase.Dockerfile -t "$LIQUIBASE_IMAGE" deploy >/dev/null || { echo "the runner image did not build"; exit 1; }
 docker network create "$RUN_ID" >/dev/null || exit 1
 docker run -d --name "$RUN_ID" --network "$RUN_ID" "$MONGO_IMAGE" --replSet rs0 --bind_ip_all >/dev/null || exit 1
 ready=0
