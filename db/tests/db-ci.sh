@@ -21,7 +21,7 @@ LIQUIBASE_IMAGE="$RUN_ID-liquibase"
 fail=0
 
 cleanup() {
-  docker rm -f "$RUN_ID" >/dev/null 2>&1 || true
+  docker rm -fv "$RUN_ID" >/dev/null 2>&1 || true
   docker network rm "$RUN_ID" >/dev/null 2>&1 || true
   docker rmi "$LIQUIBASE_IMAGE" >/dev/null 2>&1 || true
 }
@@ -51,26 +51,29 @@ check() { # name, then the command that must succeed
   fi
 }
 
-# The state of the control collection, so a second update that applied anything shows as a difference
-changelog_state() {
-  mongo "const rows = db.databasechangelog_identity_audit.find({}, {id: 1, md5sum: 1}).sort({orderexecuted: 1}).toArray(); print(rows.length + ':' + rows.map(r => r.id + r.md5sum).join(','))"
+# Everything a second update could change: the changesets recorded (id and checksum, in the order they ran),
+# the collections of the domain and the indexes of each. It always prints, so a failing mongosh is an error and
+# never an empty string that two failed reads would share.
+state() {
+  mongo "const control = ['databasechangelog_identity_audit', 'databasechangeloglock_identity_audit'];
+    const rows = db.getCollection('databasechangelog_identity_audit').find({}, {id: 1, md5sum: 1}).sort({orderExecuted: 1}).toArray();
+    const data = db.getCollectionNames().filter(n => !control.includes(n) && !n.startsWith('system.')).sort();
+    print('changesets=' + rows.map(r => r.id + '@' + r.md5sum).join(',') + ' collections=' + data.map(n => n + '[' + db.getCollection(n).getIndexes().map(i => i.name).sort().join('|') + ']').join(','))"
 }
 
 second_update_changes_nothing() {
-  before=$(changelog_state)
+  before=$(state) || { echo "could not read the state"; return 1; }
   out=$(lb update 2>&1) || { printf '%s\n' "$out" | tail -n 8; return 1; }
-  [ "$before" = "$(changelog_state)" ] || { echo "the second update changed the control collection"; return 1; }
+  after=$(state) || { echo "could not read the state"; return 1; }
+  case $before in changesets=*) ;; *) echo "unexpected state: $before"; return 1 ;; esac
+  [ "$before" = "$after" ] || { echo "the second update changed the database"; echo "  before: $before"; echo "  after:  $after"; return 1; }
 }
 
-# Nothing of the domain may be left: only the control collections of Liquibase and the system ones
-domain_collections() {
-  mongo "print(db.getCollectionNames().filter(n => !n.startsWith('databasechangelog') && !n.startsWith('system.')).sort().join(','))"
-}
-
+# Nothing of the domain may be left: only the two control collections and the system ones
 rolled_back_to_empty() {
-  lb rollback-count 999 >/dev/null 2>&1 || { echo "rollback-count 999 failed"; return 1; }
-  left=$(domain_collections)
-  [ -z "$left" ] || { echo "the rollback left collections: $left"; return 1; }
+  out=$(lb rollback-count 999 2>&1) || { printf '%s\n' "$out" | tail -n 8; echo "rollback-count 999 failed"; return 1; }
+  now=$(state) || { echo "could not read the state"; return 1; }
+  case $now in "changesets= collections=") ;; *) echo "the rollback left something: $now"; return 1 ;; esac
 }
 
 # ---- an empty instance, as multi-tour-infra-mongo leaves it for this domain
