@@ -19,7 +19,7 @@ In the database `identity_audit` of the MongoDB instance. The control collection
 
 ## How to test it
 
-`sh db/tests/db-ci.sh`; it needs Docker. It starts its own throwaway MongoDB replica set and a Liquibase runner image, builds the database from empty, applies the migrations a second time (nothing changes), rolls everything back and builds it again. It runs on every pull request to `develop`, `qa` and `main` (`db-ci.yml`).
+`sh db/tests/db-ci.sh`; it needs Docker. It starts its own throwaway MongoDB replica set and a Liquibase runner image, builds the database from empty, applies the migrations a second time (nothing changes), rolls everything back and builds it again. It runs on every pull request to `develop` and `qa` (`db-ci.yml`).
 
 ## What is missing
 
