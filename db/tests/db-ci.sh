@@ -72,7 +72,8 @@ state() {
   mongo "const control = ['databasechangelog_identity_audit', 'databasechangeloglock_identity_audit'];
     const rows = db.getCollection('databasechangelog_identity_audit').find({}, {id: 1, md5sum: 1}).sort({orderExecuted: 1}).toArray();
     const data = db.getCollectionNames().filter(n => !control.includes(n) && !n.startsWith('system.')).sort();
-    print('changesets=' + rows.map(r => r.id + '@' + r.md5sum).join(',') + ' collections=' + data.map(n => n + '[' + db.getCollection(n).getIndexes().map(i => i.name).sort().join('|') + ']' + JSON.stringify(db.getCollectionInfos({name: n})[0].options)).join(','))"
+    const app = db.getUser('identity_audit_app');
+    print('changesets=' + rows.map(r => r.id + '@' + r.md5sum).join(',') + ' roles=' + db.getRoles().roles.map(r => r.role).sort().join(',') + ' app=' + (app ? app.roles.map(r => r.role).sort().join(',') : 'MISSING') + ' collections=' + data.map(n => n + '[' + db.getCollection(n).getIndexes().map(i => i.name).sort().join('|') + ']' + JSON.stringify(db.getCollectionInfos({name: n})[0].options)).join(','))"
 }
 
 second_update_changes_nothing() {
@@ -87,7 +88,7 @@ second_update_changes_nothing() {
 rolled_back_to_empty() {
   out=$(lb rollback-count 999 2>&1) || { printf '%s\n' "$out" | tail -n 8; echo "rollback-count 999 failed"; return 1; }
   now=$(state) || { echo "could not read the state"; return 1; }
-  case $now in "changesets= collections=") ;; *) echo "the rollback left something: $now"; return 1 ;; esac
+  case $now in "changesets= roles= app=readWrite collections=") ;; *) echo "the rollback left something: $now"; return 1 ;; esac
 }
 
 # Idempotence of each changeset (plan D-08): if the control collections are lost, or a run stopped half way,
@@ -119,6 +120,10 @@ for _ in $(seq 1 60); do
   sleep 1
 done
 [ "$primary" = 1 ] || { echo "the replica set never had a primary"; exit 1; }
+
+# What the infrastructure leaves for the domain: the user of the connection, with the role of the instance. The
+# password is made here, used by nobody and thrown away with the container.
+mongo "db.createUser({user: 'identity_audit_app', pwd: crypto.randomUUID(), roles: [{role: 'readWrite', db: 'identity_audit'}]})" >/dev/null || { echo "could not create the instance user"; exit 1; }
 
 check "I·db_ci_builds_from_empty" lb update
 check "I·db_ci_second_update_changes_nothing" second_update_changes_nothing
@@ -178,6 +183,12 @@ probe "I·outbox_event_without_any_of_its_ten_required_fields_is_rejected" "121,
 probe "I·outbox_event_text_with_a_line_break_a_space_or_too_long_is_rejected" "121,121,121,121,121,121,121,121" "print([evt(event({_id: id(1), aggregateId: id(1) + '\\n'})), evt(event({_id: id(2), correlationId: 'corr 2'})), evt(event({_id: id(3), eventType: 'Tenant Created'})), evt(event({_id: id(4), correlationId: 'c'.repeat(129)})), evt(event({_id: id(5), reason: 'r'.repeat(501)})), evt(event({_id: id(6), lastError: 'e'.repeat(1001)})), evt(event({_id: id(7), tenantId: 'not-a-uuid'})), evt(event({_id: id(8), actorId: ' '}))].join(','))"
 probe "I·repeat_key_text_with_a_line_break_or_a_bad_resource_is_rejected" "121,121,121,121" "print([keys(repeatKey({key: 'onboard-tenant:1:1\\n'})), keys(repeatKey({key: 'has a space'})), keys(repeatKey({resourceId: 'not-a-uuid'})), keys(repeatKey({operation: 'two words'}))].join(','))"
 probe "I·repeat_key_index_serves_the_purge_by_age" '{"createdAt":1}' "print(JSON.stringify(db.idempotency_keys.getIndexes().find(i => i.name === 'idx_idempotency_keys_createdat').key))"
+
+probe "I·roles_reader_and_writer_exist_and_are_the_only_ones" "identity_audit_reader,identity_audit_writer" "print(db.getRoles().roles.map(r => r.role).sort().join(','))"
+probe "I·reader_role_can_only_read_the_collections_of_the_domain" '[{"resource":{"db":"identity_audit","collection":""},"actions":["find"]}]' "print(JSON.stringify(db.getRole('identity_audit_reader', {showPrivileges: true}).privileges))"
+probe "I·writer_role_reads_and_writes_the_collections_of_the_domain_and_changes_no_structure" '[{"resource":{"db":"identity_audit","collection":""},"actions":["find","insert","remove","update"]}]' "print(JSON.stringify(db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => ({resource: p.resource, actions: p.actions.slice().sort()}))))"
+probe "I·roles_hold_no_other_role_and_no_password" '[[],[]]' "print(JSON.stringify(['identity_audit_reader', 'identity_audit_writer'].map(r => db.getRole(r).roles)))"
+probe "I·app_user_holds_the_reader_and_the_writer_roles" "identity_audit_reader,identity_audit_writer,readWrite" "print(db.getUser('identity_audit_app').roles.map(r => r.role).sort().join(','))"
 
 # the single name the spec uses for the whole sequence (RN-IDA-DB-08)
 [ "$fail" = 0 ] && echo "PASS  I·db_ci_builds_reruns_rolls_back_and_rebuilds"
