@@ -21,4 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Build, rerun, roll back and rebuild
+        # Same versions as the defaults of the script, from registries without the anonymous limit of
+        # Docker Hub, which a shared runner address reaches (429 Too Many Requests)
+        env:
+          MONGO_IMAGE: public.ecr.aws/docker/library/mongo:8.0.32
+          LIQUIBASE_BASE: ghcr.io/liquibase/liquibase:5.0.4
         run: sh db/tests/db-ci.sh

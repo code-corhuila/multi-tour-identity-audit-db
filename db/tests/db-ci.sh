@@ -13,7 +13,9 @@ cd "$(dirname "$0")/../.." || exit 1
 # Git Bash on Windows rewrites container paths such as /workspace; no effect elsewhere
 export MSYS_NO_PATHCONV=1
 
-MONGO_IMAGE="mongo:8.0.32"
+# Same versions from another registry when Docker Hub limits the address (the CI sets both; see db-ci.yml)
+MONGO_IMAGE="${MONGO_IMAGE:-mongo:8.0.32}"
+LIQUIBASE_BASE="${LIQUIBASE_BASE:-liquibase/liquibase:5.0.4}"
 RUN_ID="idadb-dbci-$$"
 DB="identity_audit"
 # the same image the runner of deploy/compose.yml uses: Liquibase plus the MongoDB extension and its driver
@@ -89,8 +91,8 @@ rolled_back_to_empty() {
 }
 
 # ---- an empty instance, as multi-tour-infra-mongo leaves it for this domain
-retry 6 30 docker pull -q "$MONGO_IMAGE" >/dev/null || { echo "the MongoDB image could not be downloaded"; exit 1; }
-retry 6 30 docker build -q -f deploy/liquibase.Dockerfile -t "$LIQUIBASE_IMAGE" deploy >/dev/null || { echo "the runner image did not build"; exit 1; }
+retry 3 20 docker pull -q "$MONGO_IMAGE" >/dev/null || { echo "the MongoDB image could not be downloaded"; exit 1; }
+retry 3 20 docker build -q --build-arg LIQUIBASE_BASE="$LIQUIBASE_BASE" -f deploy/liquibase.Dockerfile -t "$LIQUIBASE_IMAGE" deploy >/dev/null || { echo "the runner image did not build"; exit 1; }
 docker network create "$RUN_ID" >/dev/null || exit 1
 docker run -d --name "$RUN_ID" --network "$RUN_ID" "$MONGO_IMAGE" --replSet rs0 --bind_ip_all >/dev/null || exit 1
 ready=0
