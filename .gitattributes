@@ -1,0 +1,4 @@
+# A script with CRLF endings fails inside the Linux container
+*.sh text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
