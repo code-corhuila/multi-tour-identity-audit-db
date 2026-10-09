@@ -133,7 +133,11 @@ PRELUDE="const id = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0'
   const tenant = o => Object.assign({_id: id(1), identifier: 'acme-tours', commercialName: 'Acme Tours', tenantStatus: 'ACTIVE', timeZone: 'America/Bogota', country: 'CO', createdAt: new Date()}, o);
   const insert = (collection, doc) => { try { db.getCollection(collection).insertOne(doc); return 'ACCEPTED'; } catch (e) { return String(e.code); } };
   const ins = doc => insert('tenants', doc);
-  try { db.tenants.deleteMany({}); } catch (e) {}"
+  const event = o => Object.assign({_id: id(1), eventType: 'TenantCreated', eventVersion: NumberInt(1), aggregateId: id(1), payload: {tenantId: id(1)}, correlationId: 'corr-1', occurredAt: new Date(), status: 'PENDING', attempts: NumberInt(0), nextAttemptAt: new Date()}, o);
+  const evt = doc => insert('outbox_events', doc);
+  const repeatKey = o => Object.assign({key: 'onboard-tenant:1:1', operation: 'registerPendingTenant', resourceId: id(1), createdAt: new Date()}, o);
+  const keys = doc => insert('idempotency_keys', doc);
+  for (const c of ['tenants', 'outbox_events', 'idempotency_keys']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
 
 probe() { # name, wanted outcome, statements
   name=$1; want=$2; js=$3
@@ -157,6 +161,23 @@ probe "I·tenant_identifier_limits_are_accepted" "ACCEPTED,ACCEPTED" "print([ins
 probe "I·tenant_without_identifier_status_or_date_is_rejected" "121,121,121" "const a = tenant({_id: id(1)}); delete a.identifier; const b = tenant({_id: id(2), identifier: 'other-one'}); delete b.tenantStatus; const c = tenant({_id: id(3), identifier: 'third-one'}); delete c.createdAt; print([ins(a), ins(b), ins(c)].join(','))"
 probe "I·tenant_with_a_bad_id_a_bad_step_or_a_wrong_type_is_rejected" "121,121,121,121" "print([ins(tenant({_id: 'ABC'})), ins(tenant({_id: id(2), identifier: 'other-one', failedStep: 'OTHER'})), ins(tenant({_id: id(3), identifier: 5})), ins(tenant({_id: id(4), identifier: 'fourth-one', createdAt: 'yesterday'}))].join(','))"
 probe "I·tenant_indexes_exist_with_their_partial_filter" "_id_,idx_tenants_identifier(partial),idx_tenants_status_createdat" "print(db.tenants.getIndexes().map(i => i.name + (i.partialFilterExpression ? '(partial)' : '')).sort().join(','))"
+
+probe "I·outbox_valid_event_is_accepted" "ACCEPTED" "print(evt(event({})))"
+probe "I·outbox_event_with_a_bad_state_or_number_is_rejected" "121,121,121,121" "print([evt(event({_id: id(1), status: 'DONE'})), evt(event({_id: id(2), attempts: NumberInt(-1)})), evt(event({_id: id(3), eventVersion: NumberInt(0)})), evt(event({_id: id(4), eventType: ''}))].join(','))"
+probe "I·outbox_event_without_its_required_fields_is_rejected" "121,121,121,121,121" "print(['eventType', 'aggregateId', 'payload', 'correlationId', 'occurredAt'].map((field, n) => { const doc = event({_id: id(n + 1)}); delete doc[field]; return evt(doc); }).join(','))"
+probe "I·outbox_event_with_an_undeclared_field_or_a_wrong_type_is_rejected" "121,121,121" "print([evt(event({_id: id(1), extra: true})), evt(event({_id: id(2), payload: 'text'})), evt(event({_id: id(3), occurredAt: 'today'}))].join(','))"
+probe "I·outbox_indexes_serve_the_pending_listing_and_the_purge" '[{"status":1,"nextAttemptAt":1,"occurredAt":1},{"publishedAt":1}]' "const keyOf = name => db.outbox_events.getIndexes().find(i => i.name === name).key; print(JSON.stringify([keyOf('idx_outbox_events_pending'), keyOf('idx_outbox_events_publishedat')]))"
+probe "I·repeat_key_is_stored_once_per_operation" "ACCEPTED,11000" "print([keys(repeatKey({})), keys(repeatKey({resourceId: id(2)}))].join(','))"
+probe "I·same_key_in_another_operation_is_accepted" "ACCEPTED,ACCEPTED" "print([keys(repeatKey({})), keys(repeatKey({operation: 'otherOperation'}))].join(','))"
+probe "I·repeat_key_with_a_bad_shape_is_rejected" "121,121,121,121,121" "const noResource = repeatKey({}); delete noResource.resourceId; print([keys(repeatKey({key: 'short'})), keys(repeatKey({key: 'k'.repeat(129)})), keys(repeatKey({key: 'has a space'})), keys(repeatKey({extra: 1})), keys(noResource)].join(','))"
+probe "I·repeat_key_index_is_unique_on_operation_and_key" '[{"operation":1,"key":1},true]' "const i = db.idempotency_keys.getIndexes().find(x => x.name === 'idx_idempotency_keys_operation_key'); print(JSON.stringify([i.key, i.unique]))"
+
+probe "I·outbox_event_numbers_accept_int_and_long_and_refuse_a_decimal" "ACCEPTED,ACCEPTED,121,121" "print([evt(event({_id: id(1), eventVersion: NumberLong('1')})), evt(event({_id: id(2), attempts: NumberLong('3')})), evt(event({_id: id(3), eventVersion: 1.5})), evt(event({_id: id(4), attempts: 0.5}))].join(','))"
+probe "I·outbox_event_status_and_dates_have_the_exact_form" "121,121" "print([evt(event({_id: id(1), status: 'pending'})), evt(event({_id: id(2), nextAttemptAt: 'soon'}))].join(','))"
+probe "I·outbox_event_without_any_of_its_ten_required_fields_is_rejected" "121,121,121,121,121" "print(['_id', 'eventVersion', 'status', 'attempts', 'nextAttemptAt'].map((field, n) => { const doc = event({_id: id(n + 1)}); delete doc[field]; if (field === '_id') doc._id = undefined; return evt(doc); }).join(','))"
+probe "I·outbox_event_text_with_a_line_break_a_space_or_too_long_is_rejected" "121,121,121,121,121,121,121,121" "print([evt(event({_id: id(1), aggregateId: id(1) + '\\n'})), evt(event({_id: id(2), correlationId: 'corr 2'})), evt(event({_id: id(3), eventType: 'Tenant Created'})), evt(event({_id: id(4), correlationId: 'c'.repeat(129)})), evt(event({_id: id(5), reason: 'r'.repeat(501)})), evt(event({_id: id(6), lastError: 'e'.repeat(1001)})), evt(event({_id: id(7), tenantId: 'not-a-uuid'})), evt(event({_id: id(8), actorId: ' '}))].join(','))"
+probe "I·repeat_key_text_with_a_line_break_or_a_bad_resource_is_rejected" "121,121,121,121" "print([keys(repeatKey({key: 'onboard-tenant:1:1\\n'})), keys(repeatKey({key: 'has a space'})), keys(repeatKey({resourceId: 'not-a-uuid'})), keys(repeatKey({operation: 'two words'}))].join(','))"
+probe "I·repeat_key_index_serves_the_purge_by_age" '{"createdAt":1}' "print(JSON.stringify(db.idempotency_keys.getIndexes().find(i => i.name === 'idx_idempotency_keys_createdat').key))"
 
 # the single name the spec uses for the whole sequence (RN-IDA-DB-08)
 [ "$fail" = 0 ] && echo "PASS  I·db_ci_builds_reruns_rolls_back_and_rebuilds"
