@@ -1,0 +1,43 @@
+databaseChangeLog:
+  - changeSet:
+      id: ddl-collections-tenants-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,collections"
+      comment: >-
+        The tenants. The structure lives in the validator: nothing undeclared, a closed list of statuses,
+        the identifier in the form of its link (patterns end in \z, because $ lets a final line break pass),
+        names and reasons that are not blank, strict and with an error on any write that does not fit
+        (Annex B, rule 1). `_id` is the tenantId.
+      changes:
+        - createCollection:
+            collectionName: tenants
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "identifier", "commercialName", "tenantStatus", "timeZone", "country", "createdAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      identifier: { bsonType: "string", minLength: 3, maxLength: 40, pattern: "^[a-z0-9]+(-[a-z0-9]+)*\\z" },
+                      commercialName: { bsonType: "string", minLength: 1, maxLength: 120, pattern: "^\\S(.*\\S)?\\z" },
+                      tenantStatus: { enum: ["PENDING", "ACTIVE", "INACTIVE", "FAILED"] },
+                      timeZone: { bsonType: "string", minLength: 1, maxLength: 64 },
+                      country: { bsonType: "string", pattern: "^[A-Z]{2}\\z" },
+                      firstAdministratorMembershipId: { bsonType: ["string", "null"], pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      statusChangedAt: { bsonType: ["date", "null"] },
+                      statusChangedBy: { bsonType: ["string", "null"], maxLength: 100, pattern: "^\\S(.*\\S)?\\z" },
+                      statusReason: { bsonType: ["string", "null"], maxLength: 500, pattern: "^\\S(.*\\S)?\\z" },
+                      failedStep: { enum: ["CREATE_ACCOUNT", "APPLY_STATUS", null] },
+                      createdAt: { bsonType: "date" },
+                      updatedAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: tenants

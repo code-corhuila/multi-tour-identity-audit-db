@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: ddl-indexes-tenants-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The identifier is unique among the tenants that are not failed, so a failed onboarding frees it
+        (AC3), and the listing of the platform is served by (status, createdAt).
+      changes:
+        - createIndex:
+            collectionName: tenants
+            keys: '{ identifier: 1 }'
+            options: '{ name: "idx_tenants_identifier", unique: true, partialFilterExpression: { tenantStatus: { $in: ["PENDING", "ACTIVE", "INACTIVE"] } } }'
+        - createIndex:
+            collectionName: tenants
+            keys: '{ tenantStatus: 1, createdAt: -1 }'
+            options: '{ name: "idx_tenants_status_createdat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "tenants", index: ["idx_tenants_identifier", "idx_tenants_status_createdat"] }'
