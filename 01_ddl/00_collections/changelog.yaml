@@ -41,3 +41,80 @@ databaseChangeLog:
       rollback:
         - dropCollection:
             collectionName: tenants
+
+  - changeSet:
+      id: ddl-collections-outbox-events-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,collections"
+      comment: >-
+        The events waiting to be delivered, written in the same transaction as the change that causes
+        them and read by job 7 through the API (ADR-004 D4). `_id` is the eventId.
+      changes:
+        - createCollection:
+            collectionName: outbox_events
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "eventType", "eventVersion", "aggregateId", "payload", "correlationId", "occurredAt", "status", "attempts", "nextAttemptAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      eventType: { bsonType: "string", minLength: 1, maxLength: 100, pattern: "^\\S+\\z" },
+                      eventVersion: { bsonType: ["int", "long"], minimum: 1 },
+                      tenantId: { bsonType: ["string", "null"], pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      aggregateId: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      actorId: { bsonType: ["string", "null"], maxLength: 100, pattern: "^\\S(.*\\S)?\\z" },
+                      reason: { bsonType: ["string", "null"], maxLength: 500, pattern: "^\\S(.*\\S)?\\z" },
+                      payload: { bsonType: "object" },
+                      correlationId: { bsonType: "string", minLength: 1, maxLength: 128, pattern: "^\\S+\\z" },
+                      occurredAt: { bsonType: "date" },
+                      publishedAt: { bsonType: ["date", "null"] },
+                      status: { enum: ["PENDING", "PUBLISHED", "FAILED"] },
+                      attempts: { bsonType: ["int", "long"], minimum: 0 },
+                      lastError: { bsonType: ["string", "null"], maxLength: 1000 },
+                      nextAttemptAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: outbox_events
+
+  - changeSet:
+      id: ddl-collections-idempotency-keys-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,collections"
+      comment: >-
+        The repeat keys of the creations: the same operation with the same key returns the first
+        resource and never creates a second (Annex C). No hash of the body is kept: the annex says the
+        body is not compared.
+      changes:
+        - createCollection:
+            collectionName: idempotency_keys
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["key", "operation", "resourceId", "createdAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "objectId" },
+                      key: { bsonType: "string", minLength: 8, maxLength: 128, pattern: "^\\S+\\z" },
+                      operation: { bsonType: "string", minLength: 1, maxLength: 100, pattern: "^\\S+\\z" },
+                      resourceId: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      createdAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: idempotency_keys
