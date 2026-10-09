@@ -51,3 +51,19 @@ databaseChangeLog:
       rollback:
         - runCommand:
             command: '{ dropIndexes: "idempotency_keys", index: "idx_idempotency_keys_operation_key" }'
+
+  - changeSet:
+      id: ddl-indexes-idempotency-keys-002
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The purge of the repeat keys by age that ADR-004 D10 names. How long a key is kept is still a
+        decision of the retention job (spec section 6).
+      changes:
+        - createIndex:
+            collectionName: idempotency_keys
+            keys: '{ createdAt: 1 }'
+            options: '{ name: "idx_idempotency_keys_createdat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "idempotency_keys", index: "idx_idempotency_keys_createdat" }'
