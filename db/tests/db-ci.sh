@@ -114,6 +114,31 @@ check "I·db_ci_second_update_changes_nothing" second_update_changes_nothing
 check "I·db_ci_rolls_back_to_empty" rolled_back_to_empty
 check "I·db_ci_rebuilds_after_the_rollback" lb update
 
+# ---- the probes of the rules of the spec: an invalid document is rejected and a valid one is accepted
+# A probe runs a few mongosh statements on the built database and prints one outcome: ACCEPTED, or the code
+# of the error (121 the validator refused it, 11000 a unique index did). It starts from an empty collection.
+PRELUDE="const id = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0');
+  const tenant = o => Object.assign({_id: id(1), identifier: 'acme-tours', commercialName: 'Acme Tours', tenantStatus: 'ACTIVE', timeZone: 'America/Bogota', country: 'CO', createdAt: new Date()}, o);
+  const insert = (collection, doc) => { try { db.getCollection(collection).insertOne(doc); return 'ACCEPTED'; } catch (e) { return String(e.code); } };
+  const ins = doc => insert('tenants', doc);
+  try { db.tenants.deleteMany({}); } catch (e) {}"
+
+probe() { # name, wanted outcome, statements
+  name=$1; want=$2; js=$3
+  got=$(mongo "$PRELUDE $js") || got="mongosh failed"
+  if [ "$got" = "$want" ]; then echo "PASS  $name"; else echo "FAIL  $name"; echo "        wanted $want, got $got"; fail=1; fi
+}
+
+probe "I·tenant_valid_document_is_accepted" "ACCEPTED" "print(ins(tenant({})))"
+probe "I·tenant_identifier_is_unique" "11000" "ins(tenant({})); print(ins(tenant({_id: id(2)})))"
+probe "I·failed_tenant_frees_its_identifier" "ACCEPTED" "ins(tenant({tenantStatus: 'FAILED', failedStep: 'CREATE_ACCOUNT'})); print(ins(tenant({_id: id(2), tenantStatus: 'PENDING'})))"
+probe "I·tenant_status_outside_the_list_is_rejected" "121" "print(ins(tenant({tenantStatus: 'DELETED'})))"
+probe "I·tenant_identifier_with_bad_format_is_rejected" "121,121,121,121,121,121" "print(['Acme_Tours', '-acme', 'acme-', 'a--b', 'ab', 'x'.repeat(41)].map((identifier, n) => ins(tenant({_id: id(n + 1), identifier}))).join(','))"
+probe "I·tenant_without_a_name_is_rejected" "121" "const doc = tenant({}); delete doc.commercialName; print(ins(doc))"
+probe "I·tenant_without_a_time_zone_or_country_is_rejected" "121,121,121" "const a = tenant({_id: id(1)}); delete a.timeZone; const b = tenant({_id: id(2), identifier: 'other-one'}); delete b.country; print([ins(a), ins(b), ins(tenant({_id: id(3), identifier: 'third-one', country: 'COL'}))].join(','))"
+probe "I·tenant_with_an_undeclared_field_is_rejected" "121" "print(ins(tenant({nickname: 'typo'})))"
+probe "I·tenant_indexes_exist_with_their_partial_filter" "_id_,idx_tenants_identifier(partial),idx_tenants_status_createdat" "print(db.tenants.getIndexes().map(i => i.name + (i.partialFilterExpression ? '(partial)' : '')).sort().join(','))"
+
 # the single name the spec uses for the whole sequence (RN-IDA-DB-08)
 [ "$fail" = 0 ] && echo "PASS  I·db_ci_builds_reruns_rolls_back_and_rebuilds"
 [ "$fail" = 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
