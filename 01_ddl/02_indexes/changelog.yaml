@@ -18,3 +18,36 @@ databaseChangeLog:
       rollback:
         - runCommand:
             command: '{ dropIndexes: "tenants", index: ["idx_tenants_identifier", "idx_tenants_status_createdat"] }'
+
+  - changeSet:
+      id: ddl-indexes-outbox-events-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The listing of pending events, oldest first, and the purge of the published ones (ADR-004 D4, D10).
+      changes:
+        - createIndex:
+            collectionName: outbox_events
+            keys: '{ status: 1, nextAttemptAt: 1, occurredAt: 1 }'
+            options: '{ name: "idx_outbox_events_pending" }'
+        - createIndex:
+            collectionName: outbox_events
+            keys: '{ publishedAt: 1 }'
+            options: '{ name: "idx_outbox_events_publishedat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "outbox_events", index: ["idx_outbox_events_pending", "idx_outbox_events_publishedat"] }'
+
+  - changeSet:
+      id: ddl-indexes-idempotency-keys-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: The unique index is what makes a second creation with the same key impossible.
+      changes:
+        - createIndex:
+            collectionName: idempotency_keys
+            keys: '{ operation: 1, key: 1 }'
+            options: '{ name: "idx_idempotency_keys_operation_key", unique: true }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "idempotency_keys", index: "idx_idempotency_keys_operation_key" }'
