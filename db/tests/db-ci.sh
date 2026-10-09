@@ -172,6 +172,13 @@ probe "I·same_key_in_another_operation_is_accepted" "ACCEPTED,ACCEPTED" "print(
 probe "I·repeat_key_with_a_bad_shape_is_rejected" "121,121,121,121,121" "const noResource = repeatKey({}); delete noResource.resourceId; print([keys(repeatKey({key: 'short'})), keys(repeatKey({key: 'k'.repeat(129)})), keys(repeatKey({key: 'has a space'})), keys(repeatKey({extra: 1})), keys(noResource)].join(','))"
 probe "I·repeat_key_index_is_unique_on_operation_and_key" '[{"operation":1,"key":1},true]' "const i = db.idempotency_keys.getIndexes().find(x => x.name === 'idx_idempotency_keys_operation_key'); print(JSON.stringify([i.key, i.unique]))"
 
+probe "I·outbox_event_numbers_accept_int_and_long_and_refuse_a_decimal" "ACCEPTED,ACCEPTED,121,121" "print([evt(event({_id: id(1), eventVersion: NumberLong(1)})), evt(event({_id: id(2), attempts: NumberLong(3)})), evt(event({_id: id(3), eventVersion: 1.5})), evt(event({_id: id(4), attempts: 0.5}))].join(','))"
+probe "I·outbox_event_status_and_dates_have_the_exact_form" "121,121" "print([evt(event({_id: id(1), status: 'pending'})), evt(event({_id: id(2), nextAttemptAt: 'soon'}))].join(','))"
+probe "I·outbox_event_without_any_of_its_ten_required_fields_is_rejected" "121,121,121,121,121" "print(['_id', 'eventVersion', 'status', 'attempts', 'nextAttemptAt'].map((field, n) => { const doc = event({_id: id(n + 1)}); delete doc[field]; if (field === '_id') doc._id = undefined; return evt(doc); }).join(','))"
+probe "I·outbox_event_text_with_a_line_break_a_space_or_too_long_is_rejected" "121,121,121,121,121,121,121,121" "print([evt(event({_id: id(1), aggregateId: id(1) + '\\n'})), evt(event({_id: id(2), correlationId: 'corr 2'})), evt(event({_id: id(3), eventType: 'Tenant Created'})), evt(event({_id: id(4), correlationId: 'c'.repeat(129)})), evt(event({_id: id(5), reason: 'r'.repeat(501)})), evt(event({_id: id(6), lastError: 'e'.repeat(1001)})), evt(event({_id: id(7), tenantId: 'not-a-uuid'})), evt(event({_id: id(8), actorId: ' '}))].join(','))"
+probe "I·repeat_key_text_with_a_line_break_or_a_bad_resource_is_rejected" "121,121,121,121" "print([keys(repeatKey({key: 'onboard-tenant:1:1\\n'})), keys(repeatKey({key: 'has a space'})), keys(repeatKey({resourceId: 'not-a-uuid'})), keys(repeatKey({operation: 'two words'}))].join(','))"
+probe "I·repeat_key_index_serves_the_purge_by_age" '{"createdAt":1}' "print(JSON.stringify(db.idempotency_keys.getIndexes().find(i => i.name === 'idx_idempotency_keys_createdat').key))"
+
 # the single name the spec uses for the whole sequence (RN-IDA-DB-08)
 [ "$fail" = 0 ] && echo "PASS  I·db_ci_builds_reruns_rolls_back_and_rebuilds"
 [ "$fail" = 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
