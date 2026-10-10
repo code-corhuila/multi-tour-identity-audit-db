@@ -67,3 +67,30 @@ databaseChangeLog:
       rollback:
         - runCommand:
             command: '{ dropIndexes: "idempotency_keys", index: "idx_idempotency_keys_createdat" }'
+
+  - changeSet:
+      id: ddl-indexes-lists-order-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The list of tenants (with and without a status) and the events due end their order with the id,
+        so a page neither repeats nor skips a row and the database never sorts in memory. The first
+        indexes stay for the service of the previous release; a later changeset drops them.
+      changes:
+        - createIndex:
+            collectionName: tenants
+            keys: '{ createdAt: -1, _id: -1 }'
+            options: '{ name: "idx_tenants_createdat_id" }'
+        - createIndex:
+            collectionName: tenants
+            keys: '{ tenantStatus: 1, createdAt: -1, _id: -1 }'
+            options: '{ name: "idx_tenants_status_createdat_id" }'
+        - createIndex:
+            collectionName: outbox_events
+            keys: '{ status: 1, nextAttemptAt: 1, occurredAt: 1, _id: 1 }'
+            options: '{ name: "idx_outbox_events_due" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "tenants", index: ["idx_tenants_createdat_id", "idx_tenants_status_createdat_id"] }'
+        - runCommand:
+            command: '{ dropIndexes: "outbox_events", index: ["idx_outbox_events_due"] }'
