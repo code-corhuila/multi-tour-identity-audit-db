@@ -101,6 +101,25 @@ migration_is_idempotent_when_the_control_is_lost() {
   [ "$before" = "$after" ] || { echo "the run changed the database"; echo "  before: $before"; echo "  after:  $after"; return 1; }
 }
 
+# HU-IDA-003 (RN-IDA-DB-13, -14, -15): undo only the changeset that adds the visual identity (and what ran after
+# it), so the validator of the first spec is back, and leave a tenant written under it.
+rollback_restores_the_previous_validator() {
+  n=$(mongo "const rows = db.getCollection('databasechangelog_identity_audit').find({}, {id: 1}).sort({orderExecuted: 1}).toArray(); const at = rows.findIndex(r => r.id === 'ddl-collections-tenants-002'); print(at < 0 ? 'MISSING' : rows.length - at)") || { echo "could not read the changesets"; return 1; }
+  [ "$n" != "MISSING" ] || { echo "changeset ddl-collections-tenants-002 was never applied"; return 1; }
+  out=$(lb rollback-count "$n" 2>&1) || { printf '%s\n' "$out" | tail -n 8; return 1; }
+  got=$(mongo "const t = o => Object.assign({_id: '00000000-0000-4000-8000-000000000001', identifier: 'acme-tours', commercialName: 'Acme Tours', tenantStatus: 'ACTIVE', timeZone: 'America/Bogota', country: 'CO', createdAt: new Date()}, o);
+    db.tenants.deleteMany({});
+    let refused = 'ACCEPTED'; try { db.tenants.insertOne(t({visualIdentity: {primaryColor: '#112233', secondaryColor: '#445566'}})); } catch (e) { refused = String(e.code); }
+    db.tenants.insertOne(t({_id: '00000000-0000-4000-8000-000000000077', identifier: 'legacy-tours'}));
+    print(refused)") || { echo "could not probe the restored validator"; return 1; }
+  [ "$got" = "121" ] || { echo "the validator of the first spec was not restored, got $got"; return 1; }
+}
+
+# the legacy tenant, written before the change, is valid under the new validator and can take the identity
+legacy_tenant_can_be_updated_after_the_change() {
+  got=$(mongo "const r = db.tenants.updateOne({_id: '00000000-0000-4000-8000-000000000077'}, {\$set: {commercialName: 'Legacy Tours S.A.', visualIdentity: {primaryColor: '#112233', secondaryColor: '#445566'}}}); print(r.matchedCount + ',' + r.modifiedCount)") || { echo "the update was refused"; return 1; }
+  [ "$got" = "1,1" ] || { echo "wanted 1,1 got $got"; return 1; }
+}
 
 # ---- an empty instance, as multi-tour-infra-mongo leaves it for this domain
 retry 3 20 docker pull -q "$MONGO_IMAGE" >/dev/null || { echo "the MongoDB image could not be downloaded"; exit 1; }
@@ -130,6 +149,10 @@ check "I·db_ci_second_update_changes_nothing" second_update_changes_nothing
 check "I·db_ci_rolls_back_to_empty" rolled_back_to_empty
 check "I·db_ci_rebuilds_after_the_rollback" lb update
 check "I·migration_is_idempotent_when_the_control_is_lost" migration_is_idempotent_when_the_control_is_lost
+check "I·rollback_restores_the_previous_validator" rollback_restores_the_previous_validator
+check "I·db_ci_reapplies_over_a_database_with_a_tenant" lb update
+check "I·tenant_created_before_the_change_can_be_updated" legacy_tenant_can_be_updated_after_the_change
+check "I·db_ci_second_update_changes_nothing_with_data" second_update_changes_nothing
 
 # ---- the probes of the rules of the spec: an invalid document is rejected and a valid one is accepted
 # A probe runs a few mongosh statements on the built database and prints one outcome: ACCEPTED, or the code
@@ -167,6 +190,13 @@ probe "I·tenant_without_identifier_status_or_date_is_rejected" "121,121,121" "c
 probe "I·tenant_with_a_bad_id_a_bad_step_or_a_wrong_type_is_rejected" "121,121,121,121" "print([ins(tenant({_id: 'ABC'})), ins(tenant({_id: id(2), identifier: 'other-one', failedStep: 'OTHER'})), ins(tenant({_id: id(3), identifier: 5})), ins(tenant({_id: id(4), identifier: 'fourth-one', createdAt: 'yesterday'}))].join(','))"
 probe "I·tenant_indexes_exist_with_their_partial_filter" "_id_,idx_tenants_createdat_id,idx_tenants_identifier(partial),idx_tenants_status_createdat,idx_tenants_status_createdat_id" "print(db.tenants.getIndexes().map(i => i.name + (i.partialFilterExpression ? '(partial)' : '')).sort().join(','))"
 
+# HU-IDA-003: the visual identity is two colors, #RRGGBB, all or nothing, and optional
+VI="const vi = o => Object.assign({primaryColor: '#1A2B3C', secondaryColor: '#aabbcc'}, o); const withVi = (n, v) => ins(tenant({_id: id(n), identifier: 'tenant-' + n, visualIdentity: v}));"
+probe "I·visual_identity_with_two_hex_colors_is_accepted" "ACCEPTED,ACCEPTED" "$VI print([withVi(1, vi({})), withVi(2, null)].join(','))"
+probe "I·visual_identity_with_a_bad_color_is_rejected" "121,121,121,121,121,121,121" "$VI print([vi({primaryColor: '1A2B3C'}), vi({primaryColor: '#1A2B3'}), vi({secondaryColor: '#GGGGGG'}), vi({secondaryColor: '#1A2B3C\\n'}), vi({primaryColor: '#1A2B3C4'}), vi({primaryColor: 'red'}), vi({secondaryColor: 7})].map((v, n) => withVi(n + 1, v)).join(','))"
+probe "I·visual_identity_with_one_color_is_rejected" "121,121" "$VI print([{primaryColor: '#1A2B3C'}, {secondaryColor: '#1A2B3C'}].map((v, n) => withVi(n + 1, v)).join(','))"
+probe "I·visual_identity_with_an_undeclared_field_is_rejected" "121,121" "$VI print([vi({logo: 'x.png'}), vi({font: 'Comic Sans'})].map((v, n) => withVi(n + 1, v)).join(','))"
+probe "I·tenant_without_a_visual_identity_is_accepted" "ACCEPTED" "print(ins(tenant({})))"
 probe "I·outbox_valid_event_is_accepted" "ACCEPTED" "print(evt(event({})))"
 probe "I·outbox_event_with_a_bad_state_or_number_is_rejected" "121,121,121,121" "print([evt(event({_id: id(1), status: 'DONE'})), evt(event({_id: id(2), attempts: NumberInt(-1)})), evt(event({_id: id(3), eventVersion: NumberInt(0)})), evt(event({_id: id(4), eventType: ''}))].join(','))"
 probe "I·outbox_event_without_its_required_fields_is_rejected" "121,121,121,121,121" "print(['eventType', 'aggregateId', 'payload', 'correlationId', 'occurredAt'].map((field, n) => { const doc = event({_id: id(n + 1)}); delete doc[field]; return evt(doc); }).join(','))"

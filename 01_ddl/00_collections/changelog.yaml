@@ -7,7 +7,14 @@ databaseChangeLog:
         The tenants. The structure lives in the validator: nothing undeclared, a closed list of statuses,
         the identifier in the form of its link (patterns end in \z, because $ lets a final line break pass),
         names and reasons that are not blank, strict and with an error on any write that does not fit
-        (Annex B, rule 1). `_id` is the tenantId.
+        (Annex B, rule 1). `_id` is the tenantId. Skipped when the collection already exists: from
+        ddl-collections-tenants-002 on its options differ, and createCollection would fail on a rerun
+        (a precondition is not part of the checksum, so this applied changeset keeps its identity).
+      preConditions:
+        - onFail: MARK_RAN
+        - not:
+            - collectionExists:
+                collectionName: tenants
       changes:
         - createCollection:
             collectionName: tenants
@@ -118,3 +125,83 @@ databaseChangeLog:
       rollback:
         - dropCollection:
             collectionName: idempotency_keys
+
+  - changeSet:
+      id: ddl-collections-tenants-002
+      author: Molina211
+      labels: "HU-IDA-003,ddl,collections"
+      comment: >-
+        The visual identity of the tenant: an optional sub-document with two colors, #RRGGBB, all or
+        nothing (RN-IDA-DB-10 to -13). collMod replaces the whole validator, so it carries every property of
+        ddl-collections-tenants-001 unchanged plus visualIdentity, and repeating it leaves the same state.
+        The rollback puts the validator of 001 back and keeps the data: a document that already holds
+        visualIdentity is still readable, but its next write is refused until the field is removed.
+      changes:
+        - runCommand:
+            command: |
+              {
+                collMod: "tenants",
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "identifier", "commercialName", "tenantStatus", "timeZone", "country", "createdAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      identifier: { bsonType: "string", minLength: 3, maxLength: 40, pattern: "^[a-z0-9]+(-[a-z0-9]+)*\\z" },
+                      commercialName: { bsonType: "string", minLength: 1, maxLength: 120, pattern: "^\\S(.*\\S)?\\z" },
+                      tenantStatus: { enum: ["PENDING", "ACTIVE", "INACTIVE", "FAILED"] },
+                      timeZone: { bsonType: "string", minLength: 1, maxLength: 64 },
+                      country: { bsonType: "string", pattern: "^[A-Z]{2}\\z" },
+                      firstAdministratorMembershipId: { bsonType: ["string", "null"], pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      statusChangedAt: { bsonType: ["date", "null"] },
+                      statusChangedBy: { bsonType: ["string", "null"], maxLength: 100, pattern: "^\\S(.*\\S)?\\z" },
+                      statusReason: { bsonType: ["string", "null"], maxLength: 500, pattern: "^\\S(.*\\S)?\\z" },
+                      failedStep: { enum: ["CREATE_ACCOUNT", "APPLY_STATUS", null] },
+                      visualIdentity: {
+                        bsonType: ["object", "null"],
+                        required: ["primaryColor", "secondaryColor"],
+                        additionalProperties: false,
+                        properties: {
+                          primaryColor: { bsonType: "string", pattern: "^#[0-9A-Fa-f]{6}\\z" },
+                          secondaryColor: { bsonType: "string", pattern: "^#[0-9A-Fa-f]{6}\\z" }
+                        }
+                      },
+                      createdAt: { bsonType: "date" },
+                      updatedAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - runCommand:
+            command: |
+              {
+                collMod: "tenants",
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "identifier", "commercialName", "tenantStatus", "timeZone", "country", "createdAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      identifier: { bsonType: "string", minLength: 3, maxLength: 40, pattern: "^[a-z0-9]+(-[a-z0-9]+)*\\z" },
+                      commercialName: { bsonType: "string", minLength: 1, maxLength: 120, pattern: "^\\S(.*\\S)?\\z" },
+                      tenantStatus: { enum: ["PENDING", "ACTIVE", "INACTIVE", "FAILED"] },
+                      timeZone: { bsonType: "string", minLength: 1, maxLength: 64 },
+                      country: { bsonType: "string", pattern: "^[A-Z]{2}\\z" },
+                      firstAdministratorMembershipId: { bsonType: ["string", "null"], pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      statusChangedAt: { bsonType: ["date", "null"] },
+                      statusChangedBy: { bsonType: ["string", "null"], maxLength: 100, pattern: "^\\S(.*\\S)?\\z" },
+                      statusReason: { bsonType: ["string", "null"], maxLength: 500, pattern: "^\\S(.*\\S)?\\z" },
+                      failedStep: { enum: ["CREATE_ACCOUNT", "APPLY_STATUS", null] },
+                      createdAt: { bsonType: "date" },
+                      updatedAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
