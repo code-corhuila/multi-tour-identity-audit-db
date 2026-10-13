@@ -197,7 +197,7 @@ probe "I·visual_identity_with_a_bad_color_is_rejected" "121,121,121,121,121,121
 probe "I·visual_identity_with_one_color_is_rejected" "121,121" "$VI print([{primaryColor: '#1A2B3C'}, {secondaryColor: '#1A2B3C'}].map((v, n) => withVi(n + 1, v)).join(','))"
 probe "I·visual_identity_with_an_undeclared_field_is_rejected" "121,121" "$VI print([vi({logo: 'x.png'}), vi({font: 'Comic Sans'})].map((v, n) => withVi(n + 1, v)).join(','))"
 probe "I·tenant_without_a_visual_identity_is_accepted" "ACCEPTED" "print(ins(tenant({})))"
- "ACCEPTED" "print(evt(event({})))"
+probe "I·outbox_valid_event_is_accepted" "ACCEPTED" "print(evt(event({})))"
 probe "I·outbox_event_with_a_bad_state_or_number_is_rejected" "121,121,121,121" "print([evt(event({_id: id(1), status: 'DONE'})), evt(event({_id: id(2), attempts: NumberInt(-1)})), evt(event({_id: id(3), eventVersion: NumberInt(0)})), evt(event({_id: id(4), eventType: ''}))].join(','))"
 probe "I·outbox_event_without_its_required_fields_is_rejected" "121,121,121,121,121" "print(['eventType', 'aggregateId', 'payload', 'correlationId', 'occurredAt'].map((field, n) => { const doc = event({_id: id(n + 1)}); delete doc[field]; return evt(doc); }).join(','))"
 probe "I·outbox_event_with_an_undeclared_field_or_a_wrong_type_is_rejected" "121,121,121" "print([evt(event({_id: id(1), extra: true})), evt(event({_id: id(2), payload: 'text'})), evt(event({_id: id(3), occurredAt: 'today'}))].join(','))"
