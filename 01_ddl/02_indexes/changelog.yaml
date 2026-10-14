@@ -1,0 +1,96 @@
+databaseChangeLog:
+  - changeSet:
+      id: ddl-indexes-tenants-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The identifier is unique among the tenants that are not failed, so a failed onboarding frees it
+        (AC3), and the listing of the platform is served by (status, createdAt).
+      changes:
+        - createIndex:
+            collectionName: tenants
+            keys: '{ identifier: 1 }'
+            options: '{ name: "idx_tenants_identifier", unique: true, partialFilterExpression: { tenantStatus: { $in: ["PENDING", "ACTIVE", "INACTIVE"] } } }'
+        - createIndex:
+            collectionName: tenants
+            keys: '{ tenantStatus: 1, createdAt: -1 }'
+            options: '{ name: "idx_tenants_status_createdat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "tenants", index: ["idx_tenants_identifier", "idx_tenants_status_createdat"] }'
+
+  - changeSet:
+      id: ddl-indexes-outbox-events-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The listing of pending events, oldest first, and the purge of the published ones (ADR-004 D4, D10).
+      changes:
+        - createIndex:
+            collectionName: outbox_events
+            keys: '{ status: 1, nextAttemptAt: 1, occurredAt: 1 }'
+            options: '{ name: "idx_outbox_events_pending" }'
+        - createIndex:
+            collectionName: outbox_events
+            keys: '{ publishedAt: 1 }'
+            options: '{ name: "idx_outbox_events_publishedat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "outbox_events", index: ["idx_outbox_events_pending", "idx_outbox_events_publishedat"] }'
+
+  - changeSet:
+      id: ddl-indexes-idempotency-keys-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: The unique index is what makes a second creation with the same key impossible.
+      changes:
+        - createIndex:
+            collectionName: idempotency_keys
+            keys: '{ operation: 1, key: 1 }'
+            options: '{ name: "idx_idempotency_keys_operation_key", unique: true }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "idempotency_keys", index: "idx_idempotency_keys_operation_key" }'
+
+  - changeSet:
+      id: ddl-indexes-idempotency-keys-002
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The purge of the repeat keys by age that ADR-004 D10 names. How long a key is kept is still a
+        decision of the retention job (spec section 6).
+      changes:
+        - createIndex:
+            collectionName: idempotency_keys
+            keys: '{ createdAt: 1 }'
+            options: '{ name: "idx_idempotency_keys_createdat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "idempotency_keys", index: "idx_idempotency_keys_createdat" }'
+
+  - changeSet:
+      id: ddl-indexes-lists-order-001
+      author: Molina211
+      labels: "HU-IDA-001,ddl,indexes"
+      comment: >-
+        The list of tenants (with and without a status) and the events due end their order with the id,
+        so a page neither repeats nor skips a row and the database never sorts in memory. The first
+        indexes stay for the service of the previous release; a later changeset drops them.
+      changes:
+        - createIndex:
+            collectionName: tenants
+            keys: '{ createdAt: -1, _id: -1 }'
+            options: '{ name: "idx_tenants_createdat_id" }'
+        - createIndex:
+            collectionName: tenants
+            keys: '{ tenantStatus: 1, createdAt: -1, _id: -1 }'
+            options: '{ name: "idx_tenants_status_createdat_id" }'
+        - createIndex:
+            collectionName: outbox_events
+            keys: '{ status: 1, nextAttemptAt: 1, occurredAt: 1, _id: 1 }'
+            options: '{ name: "idx_outbox_events_due" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "tenants", index: ["idx_tenants_createdat_id", "idx_tenants_status_createdat_id"] }'
+        - runCommand:
+            command: '{ dropIndexes: "outbox_events", index: ["idx_outbox_events_due"] }'

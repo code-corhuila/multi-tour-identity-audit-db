@@ -1,0 +1,35 @@
+# The migration runner of the identity_audit database (Annex J, J.7). It defines no database and no volume:
+# the single MongoDB instance belongs to multi-tour-infra-mongo, and this file only points at it.
+# Run it with the variables file of the environment, from the infrastructure repository:
+#   docker compose --env-file env/dev.env --profile tooling run --rm identity-audit-db-migrate update
+services:
+  identity-audit-db-migrate:
+    build:
+      context: .
+      dockerfile: liquibase.Dockerfile
+    image: multi-tour-identity-audit-db-migrate:5.0.4
+    # Not started by `up`: it is run on purpose, for one migration at a time
+    profiles: [tooling]
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - ..:/workspace:ro
+    # The instance administrator, because the runner also grants roles (ADR-005 E7). Never the app user.
+    # Connection in variables, so the password is not in the command line and any Liquibase command can follow
+    # the service name (`... run --rm identity-audit-db-migrate rollback-count 1`).
+    environment:
+      LIQUIBASE_SEARCH_PATH: /workspace
+      LIQUIBASE_COMMAND_CHANGELOG_FILE: changelog/changelog-master.yaml
+      LIQUIBASE_COMMAND_URL: mongodb://mongo:27017/${IDENTITY_AUDIT_DATABASE:-identity_audit}?replicaSet=rs0&authSource=admin
+      LIQUIBASE_COMMAND_USERNAME: ${MONGO_INITDB_ROOT_USERNAME:?MONGO_INITDB_ROOT_USERNAME is required, set it in env/<environment>.env}
+      LIQUIBASE_COMMAND_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD:?MONGO_INITDB_ROOT_PASSWORD is required, set it in env/<environment>.env}
+      # Its own control collections, so two domains never share one (Annex J, J.6)
+      LIQUIBASE_DATABASE_CHANGELOG_TABLE_NAME: databasechangelog_identity_audit
+      LIQUIBASE_DATABASE_CHANGELOG_LOCK_TABLE_NAME: databasechangeloglock_identity_audit
+    command: [update]
+    networks: [platform]
+
+networks:
+  platform:
+    external: true

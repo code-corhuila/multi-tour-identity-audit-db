@@ -1,0 +1,29 @@
+name: db-ci
+
+# The database must build from an empty MongoDB, rerun with no change, roll back to empty and build again
+# (Annex B). tests/db-ci.sh starts its own throwaway replica set and runner image.
+# Pull requests toward develop and qa only, to save the course's automation minutes. No schedule.
+on:
+  pull_request:
+    branches: [develop, qa]
+
+concurrency:
+  group: db-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, rerun, roll back and rebuild
+        # Same versions as the defaults of the script, from registries without the anonymous limit of
+        # Docker Hub, which a shared runner address reaches (429 Too Many Requests)
+        env:
+          MONGO_IMAGE: public.ecr.aws/docker/library/mongo:8.0.32
+          LIQUIBASE_BASE: ghcr.io/liquibase/liquibase:5.0.4
+        run: sh db/tests/db-ci.sh
