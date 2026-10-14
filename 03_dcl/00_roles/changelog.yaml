@@ -1,0 +1,46 @@
+databaseChangeLog:
+  - changeSet:
+      id: dcl-roles-reader-001
+      author: Molina211
+      labels: "HU-IDA-001,dcl,roles"
+      comment: >-
+        The role that only reads the collections of the domain. No password: a role is not a login
+        (Annex B). createRole fails when the role exists, so a rerun is allowed to ignore that. Limit: it ignores any error, and a
+        role that exists with other privileges is not reconciled; a failure shows at the strict grant below.
+      failOnError: false
+      changes:
+        - runCommand:
+            command: '{ createRole: "identity_audit_reader", privileges: [{ resource: { db: "identity_audit", collection: "" }, actions: ["find"] }], roles: [] }'
+      rollback:
+        - runCommand:
+            command: '{ dropRole: "identity_audit_reader" }'
+
+  - changeSet:
+      id: dcl-roles-writer-001
+      author: Molina211
+      labels: "HU-IDA-001,dcl,roles"
+      comment: >-
+        The role that reads and writes the documents of the domain and changes no structure: no
+        createCollection, no dropCollection, no index.
+      failOnError: false
+      changes:
+        - runCommand:
+            command: '{ createRole: "identity_audit_writer", privileges: [{ resource: { db: "identity_audit", collection: "" }, actions: ["find", "insert", "update", "remove"] }], roles: [] }'
+      rollback:
+        - runCommand:
+            command: '{ dropRole: "identity_audit_writer" }'
+
+  - changeSet:
+      id: dcl-roles-grant-001
+      author: Molina211
+      labels: "HU-IDA-001,dcl,roles"
+      comment: >-
+        The user identity_audit_app belongs to multi-tour-infra-mongo; this only grants the two roles to it
+        (Annex J, J.7). It must not ignore a failure: without the user the grant has to stop the run.
+        Granting a role already held changes nothing, so a rerun is safe.
+      changes:
+        - runCommand:
+            command: '{ grantRolesToUser: "identity_audit_app", roles: ["identity_audit_reader", "identity_audit_writer"] }'
+      rollback:
+        - runCommand:
+            command: '{ revokeRolesFromUser: "identity_audit_app", roles: ["identity_audit_reader", "identity_audit_writer"] }'
