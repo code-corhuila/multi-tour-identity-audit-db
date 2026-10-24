@@ -165,7 +165,11 @@ PRELUDE="const id = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0'
   const evt = doc => insert('outbox_events', doc);
   const repeatKey = o => Object.assign({key: 'onboard-tenant:1:1', operation: 'registerPendingTenant', resourceId: id(1), createdAt: new Date()}, o);
   const keys = doc => insert('idempotency_keys', doc);
-  for (const c of ['tenants', 'outbox_events', 'idempotency_keys']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
+  const processed = o => Object.assign({_id: id(1), processedAt: new Date()}, o);
+  const pe = doc => insert('processed_events', doc);
+  const cutoff = o => Object.assign({_id: id(1), tenantId: id(2), revokedFrom: new Date(), updatedAt: new Date()}, o);
+  const cut = doc => insert('account_session_cutoffs', doc);
+  for (const c of ['tenants', 'outbox_events', 'idempotency_keys', 'processed_events', 'account_session_cutoffs']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
 
 probe() { # name, wanted outcome, statements
   name=$1; want=$2; js=$3
@@ -214,6 +218,13 @@ probe "I·outbox_event_without_any_of_its_ten_required_fields_is_rejected" "121,
 probe "I·outbox_event_text_with_a_line_break_a_space_or_too_long_is_rejected" "121,121,121,121,121,121,121,121" "print([evt(event({_id: id(1), aggregateId: id(1) + '\\n'})), evt(event({_id: id(2), correlationId: 'corr 2'})), evt(event({_id: id(3), eventType: 'Tenant Created'})), evt(event({_id: id(4), correlationId: 'c'.repeat(129)})), evt(event({_id: id(5), reason: 'r'.repeat(501)})), evt(event({_id: id(6), lastError: 'e'.repeat(1001)})), evt(event({_id: id(7), tenantId: 'not-a-uuid'})), evt(event({_id: id(8), actorId: ' '}))].join(','))"
 probe "I·repeat_key_text_with_a_line_break_or_a_bad_resource_is_rejected" "121,121,121,121" "print([keys(repeatKey({key: 'onboard-tenant:1:1\\n'})), keys(repeatKey({key: 'has a space'})), keys(repeatKey({resourceId: 'not-a-uuid'})), keys(repeatKey({operation: 'two words'}))].join(','))"
 probe "I·repeat_key_index_serves_the_purge_by_age" '{"createdAt":1}' "print(JSON.stringify(db.idempotency_keys.getIndexes().find(i => i.name === 'idx_idempotency_keys_createdat').key))"
+
+# HU-WRK-007 AC2: what identity-audit keeps to cut the sessions of a revoked account (ADR-004 D4 and D5)
+probe "I·processed_event_and_cutoff_valid_documents_are_accepted" "ACCEPTED,ACCEPTED,ACCEPTED" "print([pe(processed({})), cut(cutoff({})), cut(cutoff({_id: id(3), tenantId: null}))].join(','))"
+probe "I·validator_refuses_a_processed_event_or_a_cutoff_that_is_malformed" "121,121,121,121,121,121,121,121" "const noDate = processed({_id: id(3)}); delete noDate.processedAt; const noFrom = cutoff({_id: id(6)}); delete noFrom.revokedFrom; print([pe(processed({_id: 'ABC'})), pe(processed({_id: id(2), extra: true})), pe(noDate), pe(processed({_id: id(4), processedAt: 'today'})), cut(cutoff({_id: 'ABC'})), cut(cutoff({_id: id(5), tenantId: 'not-a-uuid'})), cut(noFrom), cut(cutoff({_id: id(7), nickname: 'typo'}))].join(','))"
+probe "I·a_second_cutoff_or_processed_row_for_the_same_id_is_refused" "ACCEPTED,11000,ACCEPTED,11000" "print([pe(processed({})), pe(processed({})), cut(cutoff({})), cut(cutoff({}))].join(','))"
+probe "I·cutoff_and_processed_event_edges_are_rejected" "121,121,121,121,121,121" "const noUpdated = cutoff({_id: id(4)}); delete noUpdated.updatedAt; print([pe(processed({_id: id(1) + '\n'})), cut(cutoff({_id: id(2), tenantId: id(2) + '\n'})), cut(cutoff({_id: 'ABCDEF01-0000-4000-8000-000000000003'})), cut(noUpdated), cut(cutoff({_id: id(5), revokedFrom: 'now'})), cut(cutoff({_id: id(6), tenantId: 7}))].join(','))"
+probe "I·processed_event_index_serves_the_purge_by_age" '{"processedAt":1}' "print(JSON.stringify(db.processed_events.getIndexes().find(i => i.name === 'idx_processed_events_processedat').key))"
 
 probe "I·roles_reader_and_writer_exist_and_are_the_only_ones" "identity_audit_reader,identity_audit_writer" "print(db.getRoles().roles.map(r => r.role).sort().join(','))"
 probe "I·reader_role_can_only_read_the_collections_of_the_domain" '[{"resource":{"db":"identity_audit","collection":""},"actions":["find"]}]' "print(JSON.stringify(db.getRole('identity_audit_reader', {showPrivileges: true}).privileges))"
