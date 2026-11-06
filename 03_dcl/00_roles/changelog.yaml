@@ -44,3 +44,35 @@ databaseChangeLog:
       rollback:
         - runCommand:
             command: '{ revokeRolesFromUser: "identity_audit_app", roles: ["identity_audit_reader", "identity_audit_writer"] }'
+
+  - changeSet:
+      id: dcl-roles-writer-002
+      author: Molina211
+      labels: "HU-IDA-002,dcl,roles"
+      comment: >-
+        The writer role, collection by collection: MongoDB adds privileges and never denies one, so the only way for the
+        application credential to be unable to change or delete an audit record is a role that never had it. Every
+        collection of the domain is listed with find, insert, update and remove, except audit_records, which has find and
+        insert only. A new collection must be added here, or the service cannot write to it. The reader role is unchanged.
+      changes:
+        - runCommand:
+            command: '{ updateRole: "identity_audit_writer", privileges: [{ resource: { db: "identity_audit", collection: "tenants" }, actions: ["find", "insert", "update", "remove"] }, { resource: { db: "identity_audit", collection: "outbox_events" }, actions: ["find", "insert", "update", "remove"] }, { resource: { db: "identity_audit", collection: "idempotency_keys" }, actions: ["find", "insert", "update", "remove"] }, { resource: { db: "identity_audit", collection: "processed_events" }, actions: ["find", "insert", "update", "remove"] }, { resource: { db: "identity_audit", collection: "account_session_cutoffs" }, actions: ["find", "insert", "update", "remove"] }, { resource: { db: "identity_audit", collection: "audit_access_settings" }, actions: ["find", "insert", "update", "remove"] }, { resource: { db: "identity_audit", collection: "audit_records" }, actions: ["find", "insert"] }], roles: [] }'
+      rollback:
+        - runCommand:
+            command: '{ updateRole: "identity_audit_writer", privileges: [{ resource: { db: "identity_audit", collection: "" }, actions: ["find", "insert", "update", "remove"] }], roles: [] }'
+
+  - changeSet:
+      id: dcl-roles-app-without-readwrite-001
+      author: Molina211
+      labels: "HU-IDA-002,dcl,roles"
+      comment: >-
+        multi-tour-infra-mongo creates identity_audit_app with readWrite on the whole database, which still allows update
+        and remove on audit_records whatever the writer role says. This takes it away, so the user holds only the reader and
+        the writer roles. Infrastructure creates the user only when it does not exist, so it does not give it back.
+        Revoking a role the user does not hold changes nothing, so a rerun is safe. The rollback gives it back.
+      changes:
+        - runCommand:
+            command: '{ revokeRolesFromUser: "identity_audit_app", roles: [{ role: "readWrite", db: "identity_audit" }] }'
+      rollback:
+        - runCommand:
+            command: '{ grantRolesToUser: "identity_audit_app", roles: [{ role: "readWrite", db: "identity_audit" }] }'

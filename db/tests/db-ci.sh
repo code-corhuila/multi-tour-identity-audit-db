@@ -171,7 +171,9 @@ PRELUDE="const id = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0'
   const cut = doc => insert('account_session_cutoffs', doc);
   const audit = o => Object.assign({_id: id(1), eventId: id(2), actorId: 'actor-1', action: 'SPECIAL_PERMISSION_GRANTED', affectedRecordId: 'accounts/' + id(3), recordedAt: new Date()}, o);
   const aud = doc => insert('audit_records', doc);
-  for (const c of ['tenants', 'outbox_events', 'idempotency_keys', 'processed_events', 'account_session_cutoffs', 'audit_records']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
+  const access = o => Object.assign({_id: id(1), tenantId: id(2), role: 'MANAGER', enabled: true, changedBy: id(3), changedAt: new Date()}, o);
+  const acc = doc => insert('audit_access_settings', doc);
+  for (const c of ['tenants', 'outbox_events', 'idempotency_keys', 'processed_events', 'account_session_cutoffs', 'audit_records', 'audit_access_settings']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
 
 probe() { # name, wanted outcome, statements
   name=$1; want=$2; js=$3
@@ -238,9 +240,14 @@ probe "I·the_audit_lists_are_served_by_their_indexes" "idx_audit_records_tenant
 
 probe "I·roles_reader_and_writer_exist_and_are_the_only_ones" "identity_audit_reader,identity_audit_writer" "print(db.getRoles().roles.map(r => r.role).sort().join(','))"
 probe "I·reader_role_can_only_read_the_collections_of_the_domain" '[{"resource":{"db":"identity_audit","collection":""},"actions":["find"]}]' "print(JSON.stringify(db.getRole('identity_audit_reader', {showPrivileges: true}).privileges))"
-probe "I·writer_role_reads_and_writes_the_collections_of_the_domain_and_changes_no_structure" '[{"resource":{"db":"identity_audit","collection":""},"actions":["find","insert","remove","update"]}]' "print(JSON.stringify(db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => ({resource: p.resource, actions: p.actions.slice().sort()}))))"
+probe "I·writer_role_reads_and_writes_each_collection_of_the_domain_and_changes_no_structure" "account_session_cutoffs:find,insert,remove,update;audit_access_settings:find,insert,remove,update;audit_records:find,insert;idempotency_keys:find,insert,remove,update;outbox_events:find,insert,remove,update;processed_events:find,insert,remove,update;tenants:find,insert,remove,update" "print(db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => p.resource.collection + ':' + p.actions.slice().sort().join(',')).sort().join(';'))"
+probe "I·writer_role_names_every_collection_of_the_database" "MATCH" "const control = ['databasechangelog_identity_audit', 'databasechangeloglock_identity_audit']; const have = db.getCollectionNames().filter(n => !control.includes(n) && !n.startsWith('system.')).sort().join(','); const named = db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => p.resource.collection).sort().join(','); print(have === named ? 'MATCH' : 'collections ' + have + ' but the role names ' + named)"
+probe "I·the_application_user_cannot_change_nor_delete_an_audit_record" "find,insert" "const u = db.getSiblingDB('admin').runCommand({usersInfo: {user: 'identity_audit_app', db: 'identity_audit'}, showPrivileges: true}).users[0]; const actions = new Set(); u.inheritedPrivileges.filter(p => p.resource.db === 'identity_audit' && (p.resource.collection === 'audit_records' || p.resource.collection === '')).forEach(p => p.actions.forEach(a => actions.add(a))); print(Array.from(actions).filter(a => ['find', 'insert', 'update', 'remove'].includes(a)).sort().join(','))"
+probe "I·validator_refuses_an_access_setting_that_is_malformed_or_repeated" "121,121,121,121,121,121,121,ACCEPTED,11000,ACCEPTED" "print([acc(access({_id: id(11), role: 'FINAL_CUSTOMER'})), acc(access({_id: id(12), role: 'TENANT_ADMINISTRATOR'})), acc(access({_id: id(13), enabled: 'yes'})), acc(access({_id: id(14), tenantId: 'not-a-uuid'})), acc(access({_id: id(15), changedBy: 'not-a-uuid'})), acc(access({_id: id(16), nickname: 'typo'})), acc(access({_id: id(17), changedAt: 'today'})), acc(access({})), acc(access({_id: id(4)})), acc(access({_id: id(5), role: 'ANALYST'}))].join(','))"
+probe "I·audit_access_setting_without_a_required_field_is_rejected" "121,121,121,121,121" "print(['tenantId', 'role', 'enabled', 'changedBy', 'changedAt'].map((field, n) => { const doc = access({_id: id(n + 1), tenantId: id(n + 20)}); delete doc[field]; return acc(doc); }).join(','))"
+probe "I·audit_access_setting_index_is_named_and_unique" '[{"tenantId":1,"role":1},true]' "const i = db.audit_access_settings.getIndexes().find(x => x.name === 'ux_audit_access_settings_tenant_id_role'); print(JSON.stringify([i.key, i.unique]))"
 probe "I·roles_hold_no_other_role_and_no_password" '[[],[]]' "print(JSON.stringify(['identity_audit_reader', 'identity_audit_writer'].map(r => db.getRole(r).roles)))"
-probe "I·app_user_holds_the_reader_and_the_writer_roles" "identity_audit_reader,identity_audit_writer,readWrite" "print(db.getUser('identity_audit_app').roles.map(r => r.role).sort().join(','))"
+probe "I·app_user_holds_the_reader_and_the_writer_roles_and_no_readwrite" "identity_audit_reader,identity_audit_writer" "print(db.getUser('identity_audit_app').roles.map(r => r.role).sort().join(','))"
 
 # the single name the spec uses for the whole sequence (RN-IDA-DB-08)
 [ "$fail" = 0 ] && echo "PASS  I·db_ci_builds_reruns_rolls_back_and_rebuilds"

@@ -309,3 +309,37 @@ databaseChangeLog:
       rollback:
         - dropCollection:
             collectionName: audit_records
+
+  - changeSet:
+      id: ddl-collections-audit-access-settings-001
+      author: Molina211
+      labels: "HU-IDA-002,ddl,collections"
+      comment: >-
+        Whether an optional role of a tenant may consult the audit of that tenant (HU-SEC-006 R3 (a), PDR section 9),
+        with who changed it last and when. One document per tenant and role; only the three optional roles.
+      changes:
+        - createCollection:
+            collectionName: audit_access_settings
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "tenantId", "role", "enabled", "changedBy", "changedAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      tenantId: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      role: { enum: ["MANAGER", "ACCOUNTANT", "ANALYST"] },
+                      enabled: { bsonType: "bool" },
+                      changedBy: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      changedAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: audit_access_settings

@@ -7,7 +7,7 @@ Governance and documentation live in [`multi-tour-docs`](https://github.com/code
 
 ## What it is
 
-The structure of the database `identity_audit` inside the single MongoDB instance of `multi-tour-infra-mongo` (Annex J): the collections of tenants, of events waiting to be delivered and of repeat keys, each with its `$jsonSchema` validator, its named indexes and its roles, written as Liquibase changesets with their inverse (Annex B). It holds no data and no secret, and it defines no database server: the instance, its volume and the user `identity_audit_app` belong to the infrastructure repository.
+The structure of the database `identity_audit` inside the single MongoDB instance of `multi-tour-infra-mongo` (Annex J): the collections of tenants, of events waiting to be delivered, of repeat keys, of the session cutoffs, of the audit records and of the audit access settings, each with its `$jsonSchema` validator, its named indexes and its roles, written as Liquibase changesets with their inverse (Annex B). It holds no data and no secret, and it defines no database server: the instance, its volume and the user `identity_audit_app` belong to the infrastructure repository.
 
 ## How to start it
 
@@ -30,7 +30,7 @@ In the database `identity_audit` of the MongoDB instance. The control collection
 
 ## What is missing
 
-Nothing for HU-IDA-001. The roles are `identity_audit_reader` and `identity_audit_writer`; the user `identity_audit_app` also keeps the `readWrite` that the instance gives it, which is more than the writer role (a gap declared in the spec, owned by `multi-tour-infra-mongo`). Next collections come with the next stories: see `07-api/specs/identity-audit/multi-tour-identity-audit-db/` in `multi-tour-docs`.
+Nothing for HU-IDA-001 and HU-IDA-002. The roles are `identity_audit_reader` and `identity_audit_writer`. The writer role lists each collection, with only `find` and `insert` on `audit_records`, so every new collection must be added to it. The migration takes away the `readWrite` that `multi-tour-infra-mongo` gives the user `identity_audit_app`, so the user holds only those two roles; the rollback gives it back. Next collections come with the next stories: see `07-api/specs/identity-audit/multi-tour-identity-audit-db/` in `multi-tour-docs`.
 
 ## Branching
 
