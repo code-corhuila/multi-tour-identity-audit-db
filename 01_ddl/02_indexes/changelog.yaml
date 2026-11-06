@@ -109,3 +109,35 @@ databaseChangeLog:
       rollback:
         - runCommand:
             command: '{ dropIndexes: "processed_events", index: ["idx_processed_events_processedat"] }'
+
+  - changeSet:
+      id: ddl-indexes-audit-records-001
+      author: Molina211
+      labels: "HU-IDA-002,ddl,indexes"
+      comment: >-
+        The unique index on the event id is what makes a repeat delivery keep one record. The other four serve the
+        lists, newest first with the id as tie-break: one tenant, one tenant by action, all tenants, all by action.
+      changes:
+        - createIndex:
+            collectionName: audit_records
+            keys: '{ eventId: 1 }'
+            options: '{ name: "ux_audit_records_event_id", unique: true }'
+        - createIndex:
+            collectionName: audit_records
+            keys: '{ tenantId: 1, recordedAt: -1, _id: -1 }'
+            options: '{ name: "idx_audit_records_tenant_id_recorded_at" }'
+        - createIndex:
+            collectionName: audit_records
+            keys: '{ tenantId: 1, action: 1, recordedAt: -1, _id: -1 }'
+            options: '{ name: "idx_audit_records_tenant_id_action_recorded_at" }'
+        - createIndex:
+            collectionName: audit_records
+            keys: '{ recordedAt: -1, _id: -1 }'
+            options: '{ name: "idx_audit_records_recorded_at" }'
+        - createIndex:
+            collectionName: audit_records
+            keys: '{ action: 1, recordedAt: -1, _id: -1 }'
+            options: '{ name: "idx_audit_records_action_recorded_at" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "audit_records", index: ["ux_audit_records_event_id", "idx_audit_records_tenant_id_recorded_at", "idx_audit_records_tenant_id_action_recorded_at", "idx_audit_records_recorded_at", "idx_audit_records_action_recorded_at"] }'
