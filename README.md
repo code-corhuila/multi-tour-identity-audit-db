@@ -11,7 +11,7 @@ The structure of the database `identity_audit` inside the single MongoDB instanc
 
 ## How to start it
 
-The database server is not here: bring up the instance first (`multi-tour-infra-mongo`, `scripts/up.sh dev`), with the `env/dev.env` you filled from its `.example`. The runner `identity-audit-db-migrate` is in `deploy/compose.yml`, behind the profile `tooling` (it does not start with `up`). It needs the service `mongo` of the infrastructure, so the two files go together; the root composition does not include this one yet. From `multi-tour-infra-mongo`, with the repositories cloned as siblings:
+The database server is not here: bring up the instance first (`multi-tour-infra-mongo`, `scripts/up.sh dev`), with the `env/dev.env` you filled from its `.example`. The runner `identity-audit-db-migrate` is in `deploy/compose.yml`, behind the profile `tooling` (it does not start with `up`). It needs the service `mongo` of the infrastructure, so the two files go together. The root composition (`platform.yml` of `multi-tour-infra-postgres`) already includes this one, so from there `docker compose -f platform.yml --env-file env/dev.env --profile tooling run --rm identity-audit-db-migrate update` runs it. From `multi-tour-infra-mongo`, with the repositories cloned as siblings:
 
 ```
 docker compose --env-file env/dev.env -f compose.yml -f ../<this-repo>/deploy/compose.yml --profile tooling run --rm identity-audit-db-migrate
