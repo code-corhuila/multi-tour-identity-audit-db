@@ -115,6 +115,20 @@ rollback_restores_the_previous_validator() {
   [ "$got" = "121" ] || { echo "the validator of the first spec was not restored, got $got"; return 1; }
 }
 
+# HU-IDA-005: undo only the changeset that gives the writer role the files collection and leave every other privilege as it was
+rollback_restores_the_previous_writer_role() {
+  privileges="print(db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => p.resource.collection + ':' + p.actions.slice().sort().join(',')).sort().join(';'))"
+  n=$(mongo "const rows = db.getCollection('databasechangelog_identity_audit').find({}, {id: 1}).sort({orderExecuted: 1}).toArray(); const at = rows.findIndex(r => r.id === 'dcl-roles-writer-003'); print(at < 0 ? 'MISSING' : rows.length - at)") || { echo "could not read the changelog"; return 1; }
+  [ "$n" != "MISSING" ] || { echo "changeset dcl-roles-writer-003 was never applied"; return 1; }
+  out=$(lb rollback-count "$n" 2>&1) || { printf '%s\n' "$out" | tail -n 8; return 1; }
+  got=$(mongo "$privileges") || { echo "could not read the role"; return 1; }
+  want="account_session_cutoffs:find,insert,remove,update;audit_access_settings:find,insert,remove,update;audit_records:find,insert;idempotency_keys:find,insert,remove,update;outbox_events:find,insert,remove,update;processed_events:find,insert,remove,update;tenants:find,insert,remove,update"
+  [ "$got" = "$want" ] || { echo "the rollback did not give back the previous privileges: $got"; return 1; }
+  out=$(lb update 2>&1) || { printf '%s\n' "$out" | tail -n 8; return 1; }
+  got=$(mongo "$privileges") || { echo "could not read the role"; return 1; }
+  case $got in *"tenant_images:find,insert,remove,update"*) ;; *) echo "the role did not get the files collection back: $got"; return 1 ;; esac
+}
+
 # the legacy tenant, written before the change, is valid under the new validator and can take the identity
 legacy_tenant_can_be_updated_after_the_change() {
   got=$(mongo "const r = db.tenants.updateOne({_id: '00000000-0000-4000-8000-000000000077'}, {\$set: {commercialName: 'Legacy Tours S.A.', visualIdentity: {primaryColor: '#112233', secondaryColor: '#445566'}}}); print(r.matchedCount + ',' + r.modifiedCount)") || { echo "the update was refused"; return 1; }
@@ -151,6 +165,7 @@ check "I·db_ci_rebuilds_after_the_rollback" lb update
 check "I·migration_is_idempotent_when_the_control_is_lost" migration_is_idempotent_when_the_control_is_lost
 check "I·rollback_restores_the_previous_validator" rollback_restores_the_previous_validator
 check "I·db_ci_reapplies_over_a_database_with_a_tenant" lb update
+check "I·rollback_restores_the_previous_writer_role" rollback_restores_the_previous_writer_role
 check "I·tenant_created_before_the_change_can_be_updated" legacy_tenant_can_be_updated_after_the_change
 check "I·db_ci_second_update_changes_nothing_with_data" second_update_changes_nothing
 
@@ -173,7 +188,9 @@ PRELUDE="const id = n => '00000000-0000-4000-8000-' + String(n).padStart(12, '0'
   const aud = doc => insert('audit_records', doc);
   const access = o => Object.assign({_id: id(1), tenantId: id(2), role: 'MANAGER', enabled: true, changedBy: id(3), changedAt: new Date()}, o);
   const acc = doc => insert('audit_access_settings', doc);
-  for (const c of ['tenants', 'outbox_events', 'idempotency_keys', 'processed_events', 'account_session_cutoffs', 'audit_records', 'audit_access_settings']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
+  const image = o => Object.assign({_id: id(1), tenantId: id(2), kind: 'LOGO', position: NumberInt(0), contentType: 'image/png', sizeBytes: NumberInt(8), sha256: 'a'.repeat(64), data: new BinData(0, 'iVBORw0KGgo='), updatedBy: id(3), updatedAt: new Date()}, o);
+  const img = doc => insert('tenant_images', doc);
+  for (const c of ['tenants', 'outbox_events', 'idempotency_keys', 'processed_events', 'account_session_cutoffs', 'audit_records', 'audit_access_settings', 'tenant_images']) { try { db.getCollection(c).deleteMany({}); } catch (e) {} }"
 
 probe() { # name, wanted outcome, statements
   name=$1; want=$2; js=$3
@@ -238,9 +255,16 @@ probe "I·audit_record_event_id_index_is_named_and_unique" '[{"eventId":1},true]
 probe "I·a_second_audit_record_of_the_same_event_is_refused" "ACCEPTED,11000" "print([aud(audit({})), aud(audit({_id: id(4)}))].join(','))"
 probe "I·the_audit_lists_are_served_by_their_indexes" "idx_audit_records_tenant_id_recorded_at,idx_audit_records_tenant_id_action_recorded_at,idx_audit_records_recorded_at,idx_audit_records_action_recorded_at" "const plan = q => { const stages = []; let index = ''; const walk = p => { if (!p) return; stages.push(p.stage); if (p.indexName) index = p.indexName; walk(p.inputStage); (p.inputStages || []).forEach(walk); }; walk(q.explain('queryPlanner').queryPlanner.winningPlan); return (stages.includes('SORT') ? 'SORT+' : '') + index; }; for (let n = 1; n <= 20; n++) { aud(audit({_id: id(n), eventId: id(n + 100), tenantId: id(n % 2 + 200), action: n % 3 ? 'TENANT_INACTIVATED' : 'SPECIAL_PERMISSION_GRANTED', recordedAt: new Date(Date.now() - n * 1000)})); } const order = {recordedAt: -1, _id: -1}; print([plan(db.audit_records.find({tenantId: id(200)}).sort(order)), plan(db.audit_records.find({tenantId: id(200), action: 'TENANT_INACTIVATED'}).sort(order)), plan(db.audit_records.find({}).sort(order)), plan(db.audit_records.find({action: 'TENANT_INACTIVATED'}).sort(order))].join(','))"
 
+# HU-IDA-005: the logo and the commercial images (RN-IDA-DB-60, -61, -62)
+probe "I·tenant_image_valid_documents_are_accepted" "ACCEPTED,ACCEPTED,ACCEPTED,ACCEPTED" "print([img(image({})), img(image({_id: id(4), kind: 'IMAGE', position: NumberInt(4), contentType: 'image/jpeg'})), img(image({_id: id(5), kind: 'IMAGE', position: NumberInt(0), contentType: 'image/webp', sizeBytes: NumberInt(1048576), data: new BinData(0, btoa('x'.repeat(1048576)))})), img(image({_id: id(6), tenantId: id(7), sizeBytes: NumberInt(1), data: new BinData(0, 'AA==')}))].join(','))"
+probe "I·validator_refuses_a_tenant_image_that_is_malformed" "121,121,121,121,121,121,121,121,121,121,121,121,121,121,121,121,121,121" "const without = (field, n) => { const doc = image({_id: id(n)}); delete doc[field]; return img(doc); }; print([without('tenantId', 1), without('kind', 2), without('position', 3), without('contentType', 4), without('sizeBytes', 5), without('sha256', 6), without('data', 7), img(image({_id: id(8), nickname: 'typo'})), img(image({_id: id(9), contentType: 'image/svg+xml'})), img(image({_id: id(10), contentType: 'image/gif'})), img(image({_id: id(11), sizeBytes: NumberInt(0), data: new BinData(0, '')})), img(image({_id: id(12), kind: 'IMAGE', sizeBytes: NumberInt(1048577), data: new BinData(0, btoa('x'.repeat(1048577)))})), img(image({_id: id(13), kind: 'IMAGE', position: NumberInt(5)})), img(image({_id: id(14), kind: 'BANNER'})), img(image({_id: id(15), kind: 'LOGO', position: NumberInt(1)})), img(image({_id: id(16), sha256: 'A'.repeat(64)})), img(image({_id: id(17), sizeBytes: NumberInt(9)})), img(image({_id: id(18), updatedBy: '   '}))].join(','))"
+probe "I·tenant_image_with_bad_types_is_refused" "121,121,121" "print([img(image({_id: id(20), data: 'iVBORw0KGgo='})), img(image({_id: id(21), tenantId: id(2) + '\\n'})), img(image({_id: id(22), position: 'zero'}))].join(','))"
+probe "I·tenant_image_place_index_is_named_and_unique" '[{"tenantId":1,"kind":1,"position":1},true]' "const i = db.tenant_images.getIndexes().find(x => x.name === 'ux_tenant_images_tenant_kind_position'); print(JSON.stringify([i.key, i.unique]))"
+probe "I·a_second_file_for_the_same_place_is_refused" "ACCEPTED,11000,ACCEPTED,ACCEPTED" "print([img(image({})), img(image({_id: id(4)})), img(image({_id: id(5), kind: 'IMAGE', position: NumberInt(0)})), img(image({_id: id(6), tenantId: id(7)}))].join(','))"
+
 probe "I·roles_reader_and_writer_exist_and_are_the_only_ones" "identity_audit_reader,identity_audit_writer" "print(db.getRoles().roles.map(r => r.role).sort().join(','))"
 probe "I·reader_role_can_only_read_the_collections_of_the_domain" '[{"resource":{"db":"identity_audit","collection":""},"actions":["find"]}]' "print(JSON.stringify(db.getRole('identity_audit_reader', {showPrivileges: true}).privileges))"
-probe "I·writer_role_reads_and_writes_each_collection_of_the_domain_and_changes_no_structure" "account_session_cutoffs:find,insert,remove,update;audit_access_settings:find,insert,remove,update;audit_records:find,insert;idempotency_keys:find,insert,remove,update;outbox_events:find,insert,remove,update;processed_events:find,insert,remove,update;tenants:find,insert,remove,update" "print(db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => p.resource.collection + ':' + p.actions.slice().sort().join(',')).sort().join(';'))"
+probe "I·writer_role_reads_and_writes_each_collection_of_the_domain_and_changes_no_structure" "account_session_cutoffs:find,insert,remove,update;audit_access_settings:find,insert,remove,update;audit_records:find,insert;idempotency_keys:find,insert,remove,update;outbox_events:find,insert,remove,update;processed_events:find,insert,remove,update;tenant_images:find,insert,remove,update;tenants:find,insert,remove,update" "print(db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => p.resource.collection + ':' + p.actions.slice().sort().join(',')).sort().join(';'))"
 probe "I·writer_role_names_every_collection_of_the_database" "MATCH" "const control = ['databasechangelog_identity_audit', 'databasechangeloglock_identity_audit']; const have = db.getCollectionNames().filter(n => !control.includes(n) && !n.startsWith('system.')).sort().join(','); const named = db.getRole('identity_audit_writer', {showPrivileges: true}).privileges.map(p => p.resource.collection).sort().join(','); print(have === named ? 'MATCH' : 'collections ' + have + ' but the role names ' + named)"
 probe "I·the_application_user_cannot_change_nor_delete_an_audit_record" "find,insert" "const u = db.getSiblingDB('admin').runCommand({usersInfo: {user: 'identity_audit_app', db: 'identity_audit'}, showPrivileges: true}).users[0]; const actions = new Set(); u.inheritedPrivileges.filter(p => p.resource.db === 'identity_audit' && (p.resource.collection === 'audit_records' || p.resource.collection === '')).forEach(p => p.actions.forEach(a => actions.add(a))); print(Array.from(actions).filter(a => ['find', 'insert', 'update', 'remove'].includes(a)).sort().join(','))"
 probe "I·validator_refuses_an_access_setting_that_is_malformed_or_repeated" "121,121,121,121,121,121,121,ACCEPTED,11000,ACCEPTED" "print([acc(access({_id: id(11), role: 'FINAL_CUSTOMER'})), acc(access({_id: id(12), role: 'TENANT_ADMINISTRATOR'})), acc(access({_id: id(13), enabled: 'yes'})), acc(access({_id: id(14), tenantId: 'not-a-uuid'})), acc(access({_id: id(15), changedBy: 'not-a-uuid'})), acc(access({_id: id(16), nickname: 'typo'})), acc(access({_id: id(17), changedAt: 'today'})), acc(access({})), acc(access({_id: id(4)})), acc(access({_id: id(5), role: 'ANALYST'}))].join(','))"

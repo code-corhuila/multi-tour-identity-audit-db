@@ -343,3 +343,49 @@ databaseChangeLog:
       rollback:
         - dropCollection:
             collectionName: audit_access_settings
+
+  - changeSet:
+      id: ddl-collections-tenant-images-001
+      author: Molina211
+      labels: "HU-IDA-005,ddl,collections"
+      comment: >-
+        The logo and the commercial images of a tenant, one document per file (HU-IDA-005, ADR-005 E6). The kind of file is
+        one of three and the size is at most 1 MB; the logo is at position 0, an image at 0 to 4, and a unique index
+        (below) keeps one file per tenant, kind and position. The smaller limit of the logo (256 KB) and the proof of the kind
+        by the bytes are the service's. The validator also checks that `sizeBytes` is the real size of `data`, so the limit of
+        1 MB cannot be skipped by declaring a smaller size; the SHA-256 cannot be recomputed by a validator and stays the service's.
+      changes:
+        - createCollection:
+            collectionName: tenant_images
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "tenantId", "kind", "position", "contentType", "sizeBytes", "sha256", "data", "updatedBy", "updatedAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      tenantId: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      kind: { bsonType: "string", enum: ["LOGO", "IMAGE"] },
+                      position: { bsonType: "int", minimum: 0, maximum: 4 },
+                      contentType: { bsonType: "string", enum: ["image/png", "image/jpeg", "image/webp"] },
+                      sizeBytes: { bsonType: "int", minimum: 1, maximum: 1048576 },
+                      sha256: { bsonType: "string", pattern: "^[0-9a-f]{64}\\z" },
+                      data: { bsonType: "binData" },
+                      updatedBy: { bsonType: "string", minLength: 1, maxLength: 100, pattern: "^\\S(.*\\S)?\\z" },
+                      updatedAt: { bsonType: "date" }
+                    },
+                    oneOf: [
+                      { properties: { kind: { enum: ["LOGO"] }, position: { enum: [0] } } },
+                      { properties: { kind: { enum: ["IMAGE"] } } }
+                    ]
+                  },
+                  $expr: { $eq: [{ $binarySize: "$data" }, "$sizeBytes"] }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: tenant_images
