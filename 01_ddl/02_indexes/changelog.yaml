@@ -155,3 +155,19 @@ databaseChangeLog:
       rollback:
         - runCommand:
             command: '{ dropIndexes: "audit_access_settings", index: ["ux_audit_access_settings_tenant_id_role"] }'
+
+  - changeSet:
+      id: ddl-indexes-tenant-images-001
+      author: Molina211
+      labels: "HU-IDA-005,ddl,indexes"
+      comment: >-
+        One file per tenant, kind and position: the database refuses a second one even if the service tried it, so there is at
+        most one logo and five images per tenant. It also serves the list of the files of a tenant.
+      changes:
+        - createIndex:
+            collectionName: tenant_images
+            keys: '{ tenantId: 1, kind: 1, position: 1 }'
+            options: '{ name: "ux_tenant_images_tenant_kind_position", unique: true }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "tenant_images", index: ["ux_tenant_images_tenant_kind_position"] }'
