@@ -205,3 +205,66 @@ databaseChangeLog:
                 validationLevel: "strict",
                 validationAction: "error"
               }
+
+  - changeSet:
+      id: ddl-collections-processed-events-001
+      author: Molina211
+      labels: "HU-WRK-007,ddl,collections"
+      comment: >-
+        The events this service already applied (ADR-004 D4): a repeat of an event id is recognised because `_id` is the
+        event id and cannot be inserted twice. Written in the same transaction as the effect.
+      changes:
+        - createCollection:
+            collectionName: processed_events
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "processedAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      processedAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: processed_events
+
+  - changeSet:
+      id: ddl-collections-account-session-cutoffs-001
+      author: Molina211
+      labels: "HU-WRK-007,ddl,collections"
+      comment: >-
+        Per account, the time from which its sessions no longer count (`AccountSessionsRevoked`, ADR-004 D5): a token
+        issued before it is answered 401. `_id` is the account id, the `sub` of the token, so there is one cutoff per
+        account; `tenantId` is absent for an account of the Platform Administrator.
+      changes:
+        - createCollection:
+            collectionName: account_session_cutoffs
+            options: |
+              {
+                validator: {
+                  $jsonSchema: {
+                    bsonType: "object",
+                    required: ["_id", "revokedFrom", "updatedAt"],
+                    additionalProperties: false,
+                    properties: {
+                      _id: { bsonType: "string", pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      tenantId: { bsonType: ["string", "null"], pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\z" },
+                      revokedFrom: { bsonType: "date" },
+                      updatedAt: { bsonType: "date" }
+                    }
+                  }
+                },
+                validationLevel: "strict",
+                validationAction: "error"
+              }
+      rollback:
+        - dropCollection:
+            collectionName: account_session_cutoffs
