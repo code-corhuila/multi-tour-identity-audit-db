@@ -94,3 +94,18 @@ databaseChangeLog:
             command: '{ dropIndexes: "tenants", index: ["idx_tenants_createdat_id", "idx_tenants_status_createdat_id"] }'
         - runCommand:
             command: '{ dropIndexes: "outbox_events", index: ["idx_outbox_events_due"] }'
+
+  - changeSet:
+      id: ddl-indexes-processed-events-001
+      author: Molina211
+      labels: "HU-WRK-007,ddl,indexes"
+      comment: >-
+        The purge of the processed event ids by age, by the retention job (ADR-004 D10).
+      changes:
+        - createIndex:
+            collectionName: processed_events
+            keys: '{ processedAt: 1 }'
+            options: '{ name: "idx_processed_events_processedat" }'
+      rollback:
+        - runCommand:
+            command: '{ dropIndexes: "processed_events", index: ["idx_processed_events_processedat"] }'
